@@ -1,10 +1,10 @@
 # vulkan-herewego
 
-First project using Vukan API, no proper goal just learning purpose 
+First project using Vukan, no proper goal except having fun with the API
 
 Core based on https://vulkan-tutorial.com/Introduction
-- except multisampling 
-- except mipmaping
+- no multisampling 
+- no mipmaping
 
 Additional features :
 - Swap recreation using oldSwapChain
