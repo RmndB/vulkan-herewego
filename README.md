@@ -8,4 +8,5 @@ Core based on https://vulkan-tutorial.com/Introduction
 
 Additional features :
 - Swap recreation using oldSwapChain
+- Dynamic states for the viewport and scissors => no need to recreate the Graphics Pipeline after SwapChain recreation
 
