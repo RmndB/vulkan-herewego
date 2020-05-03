@@ -11,6 +11,7 @@ Global additional features :
 - Dynamic states for the viewport and scissors => no need to recreate the Graphics Pipeline after SwapChain recreation
 
 GLFW specific implementations :
-- Look around
-- Pause
+- Look around when dragging with left mouse button
+- Pause when hitting escape
+- Moving forward/backward when scrolling
 
