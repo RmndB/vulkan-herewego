@@ -1,7 +1,7 @@
 #define GLFW_INCLUDE_VULKAN
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
-//STB Image loader library (external)
+//STB Image loader library
 #define STB_IMAGE_IMPLEMENTATION
 
 //Our OBJ importation library
@@ -1151,12 +1151,12 @@ private:
 		int width, height = 0;
 		glfwGetFramebufferSize(window, &width, &height);
 
-		cameraSpec.cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
-		cameraSpec.cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
-		cameraSpec.cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+		cameraSpec.cameraPos = glm::vec3(2.0f, 2.0f, 2.0f);
+		cameraSpec.cameraFront = glm::vec3(-2.0f, -2.0f, -2.0f);
+		cameraSpec.cameraUp = glm::vec3(0.0f, 0.0f, 1.0f);
 		cameraSpec.firstMouse = true;
-		cameraSpec.yaw = -90.0f;	// yaw is initialized to -90.0 degrees since a yaw of 0.0 results in a direction vector pointing to the right so we initially rotate a bit to the left.
-		cameraSpec.pitch = 0.0f;
+		cameraSpec.yaw = 135.0f;	// yaw is initialized to -90.0 degrees since a yaw of 0.0 results in a direction vector pointing to the right so we initially rotate a bit to the left.
+		cameraSpec.pitch = -35.0f;
 		cameraSpec.lastX = width / 2.0;
 		cameraSpec.lastY = height / 2.0;
 		cameraSpec.fov = 45.0f;
@@ -1530,16 +1530,18 @@ private:
 		cameraSpec.yaw += xoffset;
 		cameraSpec.pitch += yoffset;
 
-		// make sure that when pitch is out of bounds, screen doesn't get flipped
+		//std::cout << cameraSpec.pitch << "  " << cameraSpec.yaw << std::endl;
+
 		if (cameraSpec.pitch > 89.0f)
 			cameraSpec.pitch = 89.0f;
 		if (cameraSpec.pitch < -89.0f)
 			cameraSpec.pitch = -89.0f;
 
+
 		glm::vec3 front;
-		front.x = float(cos(glm::radians(cameraSpec.yaw)) * cos(glm::radians(cameraSpec.pitch)));
-		front.y = float(sin(glm::radians(cameraSpec.pitch)));
-		front.z = float(sin(glm::radians(cameraSpec.yaw)) * cos(glm::radians(cameraSpec.pitch)));
+		front.x = float(cos(glm::radians(-cameraSpec.yaw)) * cos(glm::radians(cameraSpec.pitch)));
+		front.y = float(sin(glm::radians(-cameraSpec.yaw)) * cos(glm::radians(cameraSpec.pitch))); 
+		front.z = float(sin(glm::radians(cameraSpec.pitch)));
 		cameraSpec.cameraFront = glm::normalize(front);
 	}
 
