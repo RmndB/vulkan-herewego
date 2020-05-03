@@ -256,10 +256,11 @@ private:
 
 		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 		glfwSetWindowUserPointer(window, this);
-		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
 		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 		glfwSetCursorPosCallback(window, cameraCallback);
 		glfwSetKeyCallback(window, keyCallback);
+		glfwSetScrollCallback(window, scrollCallback);
 	}
 
 	void initVulkan() {
@@ -520,7 +521,7 @@ private:
 		createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; //alpha channel blending with other windows (ignored here)
 		createInfo.presentMode = presentMode;
 		createInfo.clipped = VK_TRUE; //If set to VK_TRUE we ignore the pixels obscured by another window
-		
+
 		oldSwapChain = swapChain;
 		createInfo.oldSwapchain = oldSwapChain;
 
@@ -986,7 +987,7 @@ private:
 		createDescriptorSets();
 		createCommandBuffers();
 	}
-	
+
 	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
 		VkBufferCreateInfo bufferInfo = {};
 		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1187,7 +1188,7 @@ private:
 		poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
-		
+
 		VkDescriptorPoolCreateInfo poolInfo = {};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
@@ -1257,7 +1258,7 @@ private:
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
-		
+
 		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
 		void* data;
@@ -1334,7 +1335,7 @@ private:
 					attrib.vertices[3 * index.vertex_index + 1],
 					attrib.vertices[3 * index.vertex_index + 2]
 				};
-				
+
 				vertex.texCoord = {
 					attrib.texcoords[2 * index.texcoord_index + 0],
 					1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
@@ -1355,7 +1356,7 @@ private:
 
 
 	}
-	
+
 
 	VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
 		for (VkFormat format : candidates) {
@@ -1367,7 +1368,7 @@ private:
 			else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {
 				return format;
 			}
-		}	
+		}
 		throw std::runtime_error("failed to find supported format!");
 	}
 
@@ -1483,7 +1484,7 @@ private:
 		copyRegion.imageSubresource.baseArrayLayer = 0;
 		copyRegion.imageSubresource.layerCount = 1;
 		copyRegion.imageOffset = { 0, 0, 0 };
-		copyRegion.imageExtent = {width, height, 1};
+		copyRegion.imageExtent = { width, height, 1 };
 
 		vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 
@@ -1511,59 +1512,71 @@ private:
 
 	static void cameraCallback(GLFWwindow* window, double xpos, double ypos)
 	{
-		if (cameraSpec.firstMouse)
+		int state = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
+		if (state == GLFW_PRESS)
 		{
+			if (cameraSpec.firstMouse)
+			{
+				cameraSpec.lastX = xpos;
+				cameraSpec.lastY = ypos;
+				cameraSpec.firstMouse = false;
+			}
+
+			double xoffset = xpos - cameraSpec.lastX;
+			double yoffset = cameraSpec.lastY - ypos; // reversed since y-coordinates go from bottom to top
 			cameraSpec.lastX = xpos;
 			cameraSpec.lastY = ypos;
-			cameraSpec.firstMouse = false;
+
+			float sensitivity = 0.1f; // change this value to your liking
+			xoffset *= sensitivity;
+			yoffset *= sensitivity;
+
+			cameraSpec.yaw += xoffset;
+			cameraSpec.pitch += yoffset;
+
+			//std::cout << cameraSpec.pitch << "  " << cameraSpec.yaw << std::endl;
+
+			if (cameraSpec.pitch > 89.0f)
+				cameraSpec.pitch = 89.0f;
+			if (cameraSpec.pitch < -89.0f)
+				cameraSpec.pitch = -89.0f;
+
+
+			glm::vec3 front;
+			front.x = float(cos(glm::radians(-cameraSpec.yaw)) * cos(glm::radians(cameraSpec.pitch)));
+			front.y = float(sin(glm::radians(-cameraSpec.yaw)) * cos(glm::radians(cameraSpec.pitch)));
+			front.z = float(sin(glm::radians(cameraSpec.pitch)));
+			cameraSpec.cameraFront = glm::normalize(front);
 		}
-
-		double xoffset = xpos - cameraSpec.lastX;
-		double yoffset = cameraSpec.lastY - ypos; // reversed since y-coordinates go from bottom to top
-		cameraSpec.lastX = xpos;
-		cameraSpec.lastY = ypos;
-
-		float sensitivity = 0.1f; // change this value to your liking
-		xoffset *= sensitivity;
-		yoffset *= sensitivity;
-
-		cameraSpec.yaw += xoffset;
-		cameraSpec.pitch += yoffset;
-
-		//std::cout << cameraSpec.pitch << "  " << cameraSpec.yaw << std::endl;
-
-		if (cameraSpec.pitch > 89.0f)
-			cameraSpec.pitch = 89.0f;
-		if (cameraSpec.pitch < -89.0f)
-			cameraSpec.pitch = -89.0f;
-
-
-		glm::vec3 front;
-		front.x = float(cos(glm::radians(-cameraSpec.yaw)) * cos(glm::radians(cameraSpec.pitch)));
-		front.y = float(sin(glm::radians(-cameraSpec.yaw)) * cos(glm::radians(cameraSpec.pitch))); 
-		front.z = float(sin(glm::radians(cameraSpec.pitch)));
-		cameraSpec.cameraFront = glm::normalize(front);
+		else {
+			cameraSpec.firstMouse = true;
+		}
 	}
 
 	static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 	{
-		if (key == GLFW_KEY_E && action == GLFW_PRESS) {
+		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
 			inPause = !inPause;
-			std::cout << inPause << std::endl;
-			if (inPause) {
-				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-			}
-			else {
-				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-			}
-			/*
+
 			while (inPause && !glfwWindowShouldClose(window)) {
 				glfwWaitEvents();
 			}
-			*/
+
 		}
 	}
 
+	static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+	{
+		static auto startTime = std::chrono::high_resolution_clock::now();
+
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+		const float cameraSpeed = 2.0f * time;
+		if (yoffset) {
+			cameraSpec.cameraPos += (float)yoffset / 50 * cameraSpeed * cameraSpec.cameraFront;
+		}		
+	}
 
 	VkShaderModule createShaderModule(const std::vector<char>& code) {
 		VkShaderModuleCreateInfo createInfo = {};
