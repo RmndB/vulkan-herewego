@@ -9,7 +9,7 @@ Core based on https://vulkan-tutorial.com/Introduction
 Global additional features :
 - Swap chain recreation using oldSwapChain
 - Dynamic states for the viewport and scissors => no need to recreate the Graphics Pipeline after SwapChain recreation
-- Dynamic UBO for object individual transformation
+- Dynamic UBO for individual object transformation
 
 GLFW specific implementations :
 - Look around when dragging with left mouse button
