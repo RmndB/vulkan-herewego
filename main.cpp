@@ -24,7 +24,6 @@
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
-const int OBJECT_INSTANCES = 2;
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -158,7 +157,12 @@ struct DynamicUniformBufferObject {
 struct Mesh {
 	std::vector<Vertex> vertices;
 	std::vector<uint16_t> indices;
+	glm::vec3 rotation;
+	float rotationAngle;
+	glm::vec3 pos;
 };
+
+//----------------------------------------------
 
 class HelloTriangleApplication {
 public:
@@ -221,9 +225,6 @@ private:
 	std::vector<VkDeviceMemory> dynamicUniformBuffersMemory;
 	
 	size_t dynamicAlignment;
-	glm::vec3 rotations[OBJECT_INSTANCES];
-	float rotationAngles[OBJECT_INSTANCES];
-	glm::vec3 pos[OBJECT_INSTANCES];
 
 	VkDescriptorPool descriptorPool;
 	std::vector<VkDescriptorSet> descriptorSets;
@@ -235,6 +236,8 @@ private:
 	std::vector<VkFence> inFlightFences;
 	std::vector<VkFence> imagesInFlight;
 	size_t currentFrame = 0;
+
+	std::vector<Mesh> meshes;
 
 	bool framebufferResized = false;
 
@@ -270,18 +273,16 @@ private:
 			}
 
 			double xoffset = xpos - cameraSpec.lastX;
-			double yoffset = cameraSpec.lastY - ypos; // reversed since y-coordinates go from bottom to top
+			double yoffset = cameraSpec.lastY - ypos;
 			cameraSpec.lastX = xpos;
 			cameraSpec.lastY = ypos;
 
-			float sensitivity = 0.1f; // change this value to your liking
+			float sensitivity = 0.1f;
 			xoffset *= sensitivity;
 			yoffset *= sensitivity;
 
 			cameraSpec.yaw += xoffset;
 			cameraSpec.pitch += yoffset;
-
-			//std::cout << cameraSpec.pitch << "  " << cameraSpec.yaw << std::endl;
 
 			if (cameraSpec.pitch > 89.0f)
 				cameraSpec.pitch = 89.0f;
@@ -299,7 +300,6 @@ private:
 			cameraSpec.firstMouse = true;
 		}
 	}
-
 	static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 	{
 		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
@@ -311,7 +311,6 @@ private:
 
 		}
 	}
-
 	static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 	{
 		static auto startTime = std::chrono::high_resolution_clock::now();
@@ -325,7 +324,51 @@ private:
 		}
 	}
 
+	void loadMeshes() {
+
+		Mesh square = {};
+		square.vertices = {
+			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+			{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+			{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+			{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+		};
+		square.indices = {
+			0, 1, 2, 2, 3, 0
+		};
+		square.pos = glm::vec3(0.0f, 0.0f, 1.0f);
+		square.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
+		square.rotationAngle = 20;
+
+		meshes.push_back(square);
+
+		Mesh triangle = {};
+		triangle.vertices = {
+			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+			{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+			{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}}
+		};
+		triangle.indices = {
+			0, 1, 2
+		};
+		triangle.pos = glm::vec3(0.0f, 0.0f, -1.0f);
+		triangle.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
+		triangle.rotationAngle = -10;
+
+		meshes.push_back(triangle);
+
+		for (const auto& mesh : meshes) {
+			for (const auto& vertex : mesh.vertices) {
+				vertices.push_back(vertex);
+			}
+			for (const auto& index : mesh.indices) {
+				indices.push_back(index);
+			}
+		}
+	}
+
 	void initVulkan() {
+		loadMeshes();
 		createInstance();
 		setupDebugMessenger();
 		createSurface();
@@ -342,7 +385,6 @@ private:
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
-		loadMeshes();
 		createVertexBuffer();
 		createIndexBuffer();
 		createCameraSpec();
@@ -1128,45 +1170,6 @@ private:
 		endSingleTimeCommands(commandBuffer);
 	}
 
-	void loadMeshes() {
-		std::vector<Mesh> meshes;
-
-		Mesh square = {};
-		square.vertices = {
-			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-			{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-			{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-			{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-		};
-		square.indices = {
-			0, 1, 2, 2, 3, 0
-		};
-
-		meshes.push_back(square);
-
-		Mesh triangle = {};
-		triangle.vertices = {
-			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-			{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-			{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}}
-		};
-		triangle.indices = {
-			0, 1, 2
-		};
-
-		meshes.push_back(triangle);
-
-		for (const auto& mesh : meshes) {
-			for (const auto& vertex : mesh.vertices) {
-				vertices.push_back(vertex);
-			}
-			for (const auto& index : mesh.indices) {
-				indices.push_back(index);
-			}
-		}
-
-	}
-
 	void createVertexBuffer() {
 		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
@@ -1226,26 +1229,13 @@ private:
 		if (minUboAlignment > 0) {
 			dynamicAlignment = (dynamicAlignment + minUboAlignment - 1) & ~(minUboAlignment - 1);
 		}
-		VkDeviceSize bufferSize = OBJECT_INSTANCES * dynamicAlignment;
+		VkDeviceSize bufferSize = meshes.size() * dynamicAlignment;
 
 		dynamicUniformBuffers.resize(swapChainImages.size());
 		dynamicUniformBuffersMemory.resize(swapChainImages.size());
 
 		for (size_t i = 0; i < swapChainImages.size(); i++) {
 			createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, dynamicUniformBuffers[i], dynamicUniformBuffersMemory[i]);
-		}
-
-		for (int i = 0; i < OBJECT_INSTANCES; i++) {
-			if (i % 2 == 0) {
-				pos[i] = glm::vec3(0.0f, 0.0f, 1.0f);
-				rotations[i] = glm::vec3(0.0f, 0.0f, 1.0f);
-				rotationAngles[i] = 20;
-			}
-			else {
-				pos[i] = glm::vec3(0.0f, 0.0f, -1.0f);
-				rotations[i] = glm::vec3(0.0f, 0.0f, 1.0f);
-				rotationAngles[i] = -10;
-			}
 		}
 	}
 
@@ -1471,16 +1461,15 @@ private:
 
 			vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-			for (uint32_t j = 0; j < OBJECT_INSTANCES; j++)
+			for (uint32_t j = 0; j < meshes.size(); j++)
 			{
 				uint32_t dynamicOffset = j * static_cast<uint32_t>(dynamicAlignment);
 				vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 1, &dynamicOffset);
-				if (j % 2 == 0) {
-					vkCmdDrawIndexed(commandBuffers[i], 6, 1, 0, 0, 0);
+				if (!j) {
+					vkCmdDrawIndexed(commandBuffers[i], (uint32_t)meshes[j].indices.size(), 1, 0, 0, 0);
 				}
 				else {
-					vkCmdDrawIndexed(commandBuffers[i], 3, 1, 6, 4, 0);
-
+					vkCmdDrawIndexed(commandBuffers[i], (uint32_t)meshes[j].indices.size(), 1, (uint32_t)meshes[j - 1].indices.size(), (uint32_t)meshes[j].vertices.size(), 0);
 				}
 			}
 			vkCmdEndRenderPass(commandBuffers[i]);
@@ -1551,16 +1540,16 @@ private:
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-		size_t bufferSize = OBJECT_INSTANCES * dynamicAlignment;
+		size_t bufferSize = meshes.size() * dynamicAlignment;
 
 		DynamicUniformBufferObject dubo;
 		dubo.model = (glm::mat4*)alignedAlloc(bufferSize, dynamicAlignment);
 
 		glm::vec3 offset(1.0f);
 
-		for (uint32_t index = 0; index < OBJECT_INSTANCES; index++)
+		for (uint32_t index = 0; index < meshes.size(); index++)
 		{
-			*(glm::mat4*)((uint64_t)dubo.model + (index * dynamicAlignment)) = glm::rotate(glm::translate(glm::mat4(1.0f), pos[index]), time * glm::radians(rotationAngles[index]), rotations[index]);
+			*(glm::mat4*)((uint64_t)dubo.model + (index * dynamicAlignment)) = glm::rotate(glm::translate(glm::mat4(1.0f), meshes[index].pos), time * glm::radians(meshes[index].rotationAngle), meshes[index].rotation);
 		}
 
 		void* data;
