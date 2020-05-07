@@ -8,7 +8,7 @@ Core based on https://vulkan-tutorial.com/Introduction
 
 Global additional features :
 - Swap chain recreation using oldSwapChain
-- Dynamic states for the viewport and scissors => no need to recreate the Graphics Pipeline after SwapChain recreation
+- Dynamic states for viewports and scissors => no need to recreate the Graphics Pipeline after SwapChain recreation
 - Dynamic UBO for individual object transformation
 - Multiple meshes drawing using an unique Vertex Buffer storing all the vertices from every objects
 - Per object texture: two descriptor sets binded (one with the DUBO and one with the texture)
