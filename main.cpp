@@ -9,6 +9,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#include <ktx.h>
+#include <ktxvulkan.h>
+
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
@@ -22,6 +25,7 @@
 #include <optional>
 #include <string.h>
 #include <set>
+#include <list>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -93,6 +97,7 @@ static struct CameraSpec {
 	double lastY;
 	float fov;
 } cameraSpec;
+
 static bool inPause = false;
 
 struct QueueFamilyIndices {
@@ -144,6 +149,10 @@ struct Vertex {
 
 		return attributeDescriptions;
 	}
+
+	bool operator==(const Vertex& other) const {
+		return pos == other.pos && color == other.color && texCoord == other.texCoord;
+	}
 };
 
 struct UniformBufferObject {
@@ -162,6 +171,28 @@ struct Mesh {
 	float rotationAngle;
 	glm::vec3 pos;
 	const char* filename;
+	float scale = 1;
+
+	std::string extension() {
+		std::string::size_type idx = std::string(filename).rfind('.');
+
+		if (idx != std::string::npos)
+		{
+			std::string extension = std::string(filename).substr(idx + 1);
+
+			return extension;
+		}
+		else
+		{
+			return NULL;
+		}
+	}
+
+	void resize() {
+		for (int i = 0; i < vertices.size(); i++) {
+			vertices[i].pos *= scale;
+		}
+	}
 };
 
 //----------------------------------------------
@@ -185,8 +216,10 @@ private:
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 	VkDevice device;
 
-	VkQueue graphicsQueue;
-	VkQueue presentQueue;
+	struct {
+		VkQueue graphicsQueue;
+		VkQueue presentQueue;
+	} queues;
 
 	VkSwapchainKHR swapChain = VK_NULL_HANDLE;
 	VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE;
@@ -200,8 +233,15 @@ private:
 	VkRenderPass renderPass;
 	VkDescriptorSetLayout descriptorSetLayoutUBO;
 	VkDescriptorSetLayout descriptorSetLayoutTexture;
-	VkPipelineLayout pipelineLayout;
-	VkPipeline graphicsPipeline;
+
+	struct {
+		VkPipelineLayout pipelineLayoutScene;
+	} pipelineLayouts;
+
+	struct {
+		VkPipeline pipelineScene;
+	} pipelines;
+
 
 	VkCommandPool commandPool;
 
@@ -226,7 +266,7 @@ private:
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
 	std::vector<VkBuffer> dynamicUniformBuffers;
 	std::vector<VkDeviceMemory> dynamicUniformBuffersMemory;
-	
+
 	size_t dynamicAlignment;
 
 	VkDescriptorPool descriptorPoolUBO;
@@ -243,6 +283,8 @@ private:
 	size_t currentFrame = 0;
 
 	std::vector<Mesh> meshes;
+
+	ktxVulkanDeviceInfo ktxDevice;
 
 	bool framebufferResized = false;
 
@@ -336,18 +378,19 @@ private:
 			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
 			{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
 			{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-			{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+			{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 		};
 		square.indices = {
 			0, 1, 2, 2, 3, 0
 		};
-		square.pos = glm::vec3(0.0f, 0.0f, 1.0f);
+		square.pos = glm::vec3(0.0f, 0.0f, 0.5f);
 		square.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
 		square.rotationAngle = 20;
 		square.filename = "square.jpg";
+		square.scale = 0.8f;
 
 		meshes.push_back(square);
-		
+
 		Mesh triangle = {};
 		triangle.vertices = {
 			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
@@ -363,7 +406,35 @@ private:
 		triangle.filename = "triangle.jpg";
 
 		meshes.push_back(triangle);
-		
+
+		Mesh cube = {};
+		cube.vertices = {
+			{ { -1.0f, -1.0f, 1.0f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f }},
+			{ {  1.0f, -1.0f,  1.0f },{ 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f }},
+			{ {  1.0f,  1.0f,  1.0f },{ 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f }},
+			{ { -1.0f,  1.0f,  1.0f },{ 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f }},
+			{ { -1.0f, -1.0f, -1.0f },{ 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f }},
+			{ {  1.0f, -1.0f, -1.0f },{ 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f }},
+			{ {  1.0f,  1.0f, -1.0f },{ 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f }},
+			{ { -1.0f,  1.0f, -1.0f },{ 0.0f, 0.0f, 0.0f }, {1.0f, 0.0f}}
+		};
+		cube.indices = {
+			0,1,2, 2,3,0, 1,5,6, 6,2,1, 7,6,5, 5,4,7, 4,0,3, 3,7,4, 4,5,1, 1,0,4, 3,2,6, 6,7,3
+		};
+		cube.pos = glm::vec3(0.0f, 0.0f, 0.0f);
+		cube.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
+		cube.rotationAngle = 20;
+		cube.filename = "square.jpg";
+		cube.scale = 0.3f;
+
+		meshes.push_back(cube);
+
+		for (int i = 0; i < meshes.size(); i++) {
+			if (meshes[i].scale != 1) {
+				meshes[i].resize();
+			}
+		}
+
 		for (const auto& mesh : meshes) {
 			for (const auto& vertex : mesh.vertices) {
 				vertices.push_back(vertex);
@@ -386,10 +457,11 @@ private:
 		createRenderPass();
 		createDescriptorSetLayoutUBO();
 		createDescriptorSetLayoutTexture();
-		createGraphicsPipeline();
+		createGraphicsPipelineScene();
 		createCommandPool();
 		createDepthResources();
 		createFramebuffers();
+		//createKtxDevice();
 		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
@@ -448,8 +520,8 @@ private:
 	void cleanup() {
 		cleanupSwapChain();
 
-		vkDestroyPipeline(device, graphicsPipeline, nullptr);
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+		vkDestroyPipeline(device, pipelines.pipelineScene, nullptr);
+		vkDestroyPipelineLayout(device, pipelineLayouts.pipelineLayoutScene, nullptr);
 
 		vkDestroySwapchainKHR(device, swapChain, nullptr);
 
@@ -649,8 +721,8 @@ private:
 			throw std::runtime_error("failed to create logical device!");
 		}
 
-		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
-		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &queues.graphicsQueue);
+		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &queues.presentQueue);
 	}
 
 	void createSwapChain() {
@@ -789,7 +861,7 @@ private:
 		duboLayoutBinding.pImmutableSamplers = nullptr;
 		duboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, duboLayoutBinding};
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, duboLayoutBinding };
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -820,9 +892,9 @@ private:
 		}
 	}
 
-	void createGraphicsPipeline() {
-		auto vertShaderCode = readFile("shaders/vert.spv");
-		auto fragShaderCode = readFile("shaders/frag.spv");
+	void createGraphicsPipelineScene() {
+		auto vertShaderCode = readFile("shaders/sceneVert.spv");
+		auto fragShaderCode = readFile("shaders/sceneFrag.spv");
 
 		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -908,7 +980,7 @@ private:
 		std::array<VkDescriptorSetLayout, 2> setLayouts = { descriptorSetLayoutUBO, descriptorSetLayoutTexture };
 		pipelineLayoutInfo.pSetLayouts = setLayouts.data();
 
-		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayouts.pipelineLayoutScene) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create pipeline layout!");
 		}
 
@@ -933,13 +1005,13 @@ private:
 		pipelineInfo.pMultisampleState = &multisampling;
 		pipelineInfo.pDepthStencilState = &depthStencil;
 		pipelineInfo.pColorBlendState = &colorBlending;
-		pipelineInfo.layout = pipelineLayout;
+		pipelineInfo.layout = pipelineLayouts.pipelineLayoutScene;
 		pipelineInfo.renderPass = renderPass;
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.pDynamicState = &dynamicState;
 
-		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipelines.pipelineScene) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create graphics pipeline!");
 		}
 
@@ -1018,43 +1090,73 @@ private:
 		return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 	}
 
+	/*void createKtxDevice() {
+		//Which queue to pick up? For now the graphics one nut is it the best option?
+		ktxVulkanDeviceInfo_Construct(&ktxDevice, physicalDevice, device, graphicsQueue, commandPool, nullptr);
+	}*/
+
 	void createTextureImage() {
 		textureImage.resize(meshes.size());
 		textureImageMemory.resize(meshes.size());
 
-		for(int i=0; i < meshes.size(); i++){
+		for (int i = 0; i < meshes.size(); i++) {
 
-			int texWidth, texHeight, texChannels;
-			std::string path(std::string("textures/") + meshes[i].filename);
+			std::string extension = meshes[i].extension();
 
-			stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-			VkDeviceSize imageSize = texWidth * texHeight * 4;
+			std::for_each(extension.begin(), extension.end(), [](char & c) {
+				c = tolower(c);
+			});
 
-			if (!pixels) {
-				throw std::runtime_error("failed to load texture image!");
+			std::list<std::string> stbExtensions{ "jpg", "png", "tga", "bmp", "psd", "gif", "hdr", "pic" };
+
+			if (!extension.compare("kdx")) {
+				createTextuteImageKTX(i);
+			}
+			else if ((std::find(stbExtensions.begin(), stbExtensions.end(), extension) != stbExtensions.end())) {
+				createTextuteImageSTB(i);
+			}
+			else {
+
 			}
 
-			VkBuffer stagingBuffer;
-			VkDeviceMemory stagingBufferMemory;
-			createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
-			void* data;
-			vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-			memcpy(data, pixels, static_cast<size_t>(imageSize));
-			vkUnmapMemory(device, stagingBufferMemory);
-
-			stbi_image_free(pixels);
-
-			createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage[i], textureImageMemory[i]);
-
-			transitionImageLayout(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-			copyBufferToImage(stagingBuffer, textureImage[i], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-			transitionImageLayout(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-			vkDestroyBuffer(device, stagingBuffer, nullptr);
-			vkFreeMemory(device, stagingBufferMemory, nullptr);
 		}
 	}
+
+	void createTextuteImageSTB(uint32_t meshIndex) {
+
+		int texWidth, texHeight, texChannels;
+		std::string path(std::string("textures/") + meshes[meshIndex].filename);
+
+		stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+		if (!pixels) {
+			throw std::runtime_error("failed to load texture image!");
+		}
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+		memcpy(data, pixels, static_cast<size_t>(imageSize));
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		stbi_image_free(pixels);
+
+		createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage[meshIndex], textureImageMemory[meshIndex]);
+
+		transitionImageLayout(textureImage[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		copyBufferToImage(stagingBuffer, textureImage[meshIndex], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+		transitionImageLayout(textureImage[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void createTextuteImageKTX(uint32_t meshIndex) {}
 
 	void createTextureImageView() {
 		textureImageView.resize(meshes.size());
@@ -1447,8 +1549,8 @@ private:
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &commandBuffer;
 
-		vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-		vkQueueWaitIdle(graphicsQueue);
+		vkQueueSubmit(queues.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+		vkQueueWaitIdle(queues.graphicsQueue);
 
 		vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 	}
@@ -1513,7 +1615,7 @@ private:
 
 			vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-			vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+			vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.pipelineScene);
 
 			VkViewport viewport{};
 			viewport.x = 0.0f;
@@ -1546,13 +1648,13 @@ private:
 
 				std::array<VkDescriptorSet, 2> descriptorSets = { descriptorSetsUBO[i], descriptorSetsTexture[j] };
 
-				vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
+				vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.pipelineLayoutScene, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
 
 				vkCmdDrawIndexed(commandBuffers[i], (uint32_t)meshes[j].indices.size(), 1, firstIndex, vertexOffset, 0);
 
 				firstIndex += (uint32_t)meshes[j].indices.size();
 				vertexOffset += (uint32_t)meshes[j].vertices.size();
-				
+
 			}
 			vkCmdEndRenderPass(commandBuffers[i]);
 
@@ -1682,7 +1784,7 @@ private:
 
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+		if (vkQueueSubmit(queues.graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
 			throw std::runtime_error("failed to submit draw command buffer!");
 		}
 
@@ -1698,7 +1800,7 @@ private:
 
 		presentInfo.pImageIndices = &imageIndex;
 
-		result = vkQueuePresentKHR(presentQueue, &presentInfo);
+		result = vkQueuePresentKHR(queues.presentQueue, &presentInfo);
 
 		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
 			framebufferResized = false;
