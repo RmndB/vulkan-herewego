@@ -9,6 +9,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
+
 #include <ktx.h>
 #include <ktxvulkan.h>
 
@@ -26,6 +29,10 @@
 #include <string.h>
 #include <set>
 #include <list>
+#include <unordered_map>
+#include <utility> 
+
+#include <boost/any.hpp>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -164,14 +171,31 @@ struct DynamicUniformBufferObject {
 	glm::mat4 *model = nullptr;;
 };
 
-struct Mesh {
+// Curiously Recurring Template Pattern <3
+template <typename T>
+class MeshLayout {
+public:
 	std::vector<Vertex> vertices;
 	std::vector<uint16_t> indices;
 	glm::vec3 rotation;
 	float rotationAngle;
 	glm::vec3 pos;
-	const char* filename;
 	float scale = 1;
+
+	static std::string flag;;
+
+	void resize() {
+		for (int i = 0; i < vertices.size(); i++) {
+			vertices[i].pos *= scale;
+		}
+	}
+};
+template <typename T> std::string MeshLayout<T>::flag = "LAYOUT_ONLY";
+
+
+class MeshTexture : public MeshLayout<MeshTexture> {
+public:
+	const char* filename;
 
 	std::string extension() {
 		std::string::size_type idx = std::string(filename).rfind('.');
@@ -187,17 +211,58 @@ struct Mesh {
 			return NULL;
 		}
 	}
+};
+std::string MeshLayout<MeshTexture>::flag = "MESH_TEXTURE";
 
-	void resize() {
-		for (int i = 0; i < vertices.size(); i++) {
-			vertices[i].pos *= scale;
+class Skybox : public MeshLayout<Skybox> {
+public:
+	std::array<const char*, 6>  filenames;
+
+	std::string extension(uint32_t index) {
+		std::string::size_type idx = std::string(filenames[index]).rfind('.');
+
+		if (idx != std::string::npos)
+		{
+			std::string extension = std::string(filenames[index]).substr(idx + 1);
+
+			return extension;
+		}
+		else
+		{
+			return NULL;
 		}
 	}
+};
+std::string MeshLayout<Skybox>::flag = "SKYBOX";
+// ------
+
+class Scene {
+public:
+	std::vector<MeshTexture> allMeshesTexture;
+	std::vector<std::pair<boost::any, std::string>> meshes;
+	Skybox skybox;
+
+	std::list<std::string> listFlag = { "SKYBOX", "MESH_TEXTURE" };
+	
+	size_t getCountMeshes() {
+		return allMeshesTexture.size() + 1;
+	}
+
+	void add(MeshTexture mesh) {
+		allMeshesTexture.push_back(mesh);
+		std::cout << mesh.flag << std::endl;
+	}
+	void add(Skybox mesh) {
+		skybox = mesh;
+		std::cout << mesh.flag << std::endl;
+	}
+
+
 };
 
 //----------------------------------------------
 
-class HelloTriangleApplication {
+class HelloApplication {
 public:
 	void run() {
 		initWindow();
@@ -216,10 +281,8 @@ private:
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 	VkDevice device;
 
-	struct {
-		VkQueue graphicsQueue;
-		VkQueue presentQueue;
-	} queues;
+	VkQueue graphicsQueue;
+	VkQueue presentQueue;
 
 	VkSwapchainKHR swapChain = VK_NULL_HANDLE;
 	VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE;
@@ -235,13 +298,14 @@ private:
 	VkDescriptorSetLayout descriptorSetLayoutTexture;
 
 	struct {
-		VkPipelineLayout pipelineLayoutScene;
-	} pipelineLayouts;
+		VkPipelineLayout scene;
+		VkPipelineLayout skybox;
+	} pipelineLayout;
 
 	struct {
-		VkPipeline pipelineScene;
-	} pipelines;
-
+		VkPipeline scene;
+		VkPipeline skybox;
+	} pipeline;
 
 	VkCommandPool commandPool;
 
@@ -249,10 +313,25 @@ private:
 	VkDeviceMemory depthImageMemory;
 	VkImageView depthImageView;
 
-	std::vector <VkImage> textureImage;
-	std::vector <VkDeviceMemory> textureImageMemory;
-	std::vector <VkImageView> textureImageView;
-	VkSampler textureSampler;
+	struct {
+		std::vector <VkImage> scene;
+		VkImage skybox;
+	} textureImage;
+	
+	struct {
+		std::vector <VkDeviceMemory> scene;
+		VkDeviceMemory skybox;
+	} textureImageMemory;
+
+	struct {
+		std::vector <VkImageView> scene;
+		VkImageView skybox;
+	} textureImageView;
+	
+	struct {
+		VkSampler scene;
+		VkSampler skybox;
+	} sampler;
 
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
@@ -272,7 +351,8 @@ private:
 	VkDescriptorPool descriptorPoolUBO;
 	VkDescriptorPool descriptorPoolTexture;
 	std::vector<VkDescriptorSet> descriptorSetsUBO;
-	std::vector<VkDescriptorSet> descriptorSetsTexture;
+
+	std::vector<VkDescriptorSet> descriptorSetTexture;
 
 	std::vector<VkCommandBuffer> commandBuffers;
 
@@ -282,9 +362,9 @@ private:
 	std::vector<VkFence> imagesInFlight;
 	size_t currentFrame = 0;
 
-	std::vector<Mesh> meshes;
-
 	ktxVulkanDeviceInfo ktxDevice;
+
+	Scene scene;
 
 	bool framebufferResized = false;
 
@@ -304,7 +384,7 @@ private:
 	}
 
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
-		auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+		auto app = reinterpret_cast<HelloApplication*>(glfwGetWindowUserPointer(window));
 		app->framebufferResized = true;
 	}
 	static void cameraCallback(GLFWwindow* window, double xpos, double ypos)
@@ -370,10 +450,10 @@ private:
 			cameraSpec.cameraPos += (float)yoffset / 50 * cameraSpeed * cameraSpec.cameraFront;
 		}
 	}
-
+	
 	void loadMeshes() {
 
-		Mesh square = {};
+		MeshTexture square = {};
 		square.vertices = {
 			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
 			{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
@@ -389,9 +469,9 @@ private:
 		square.filename = "square.jpg";
 		square.scale = 0.8f;
 
-		meshes.push_back(square);
+		scene.add(square);
 
-		Mesh triangle = {};
+		MeshTexture triangle = {};
 		triangle.vertices = {
 			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
 			{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
@@ -405,37 +485,56 @@ private:
 		triangle.rotationAngle = -10;
 		triangle.filename = "triangle.jpg";
 
-		meshes.push_back(triangle);
+		scene.add(triangle);
 
-		Mesh cube = {};
+		Skybox cube = {};
 		cube.vertices = {
-			{ { -1.0f, -1.0f, 1.0f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f }},
-			{ {  1.0f, -1.0f,  1.0f },{ 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f }},
-			{ {  1.0f,  1.0f,  1.0f },{ 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f }},
-			{ { -1.0f,  1.0f,  1.0f },{ 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f }},
-			{ { -1.0f, -1.0f, -1.0f },{ 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f }},
-			{ {  1.0f, -1.0f, -1.0f },{ 0.0f, 1.0f, 0.0f }, { 1.0f, 0.0f }},
-			{ {  1.0f,  1.0f, -1.0f },{ 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f }},
-			{ { -1.0f,  1.0f, -1.0f },{ 0.0f, 0.0f, 0.0f }, {1.0f, 0.0f}}
+			{ { -10.0f, -10.0f, 10.0f }},
+			{ {  10.0f, -10.0f,  10.0f }},
+			{ {  10.0f,  10.0f,  10.0f }},
+			{ { -10.0f,  10.0f,  10.0f }},
+			{ { -10.0f, -10.0f, -10.0f }},
+			{ {  10.0f, -10.0f, -10.0f }},
+			{ {  10.0f,  10.0f, -10.0f }},
+			{ { -10.0f,  10.0f, -10.0f }}
 		};
+
+
 		cube.indices = {
 			0,1,2, 2,3,0, 1,5,6, 6,2,1, 7,6,5, 5,4,7, 4,0,3, 3,7,4, 4,5,1, 1,0,4, 3,2,6, 6,7,3
 		};
+
 		cube.pos = glm::vec3(0.0f, 0.0f, 0.0f);
 		cube.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
 		cube.rotationAngle = 20;
-		cube.filename = "square.jpg";
-		cube.scale = 0.3f;
+		cube.filenames[0] = ("skybox/+x.bmp");
+		cube.filenames[1] = ("skybox/-x.bmp");
+		cube.filenames[2] = ("skybox/-z.bmp");
+		cube.filenames[3] = ("skybox/+z.bmp");
+		cube.filenames[4] = ("skybox/+y.bmp");
+		cube.filenames[5] = ("skybox/-y.bmp");
+		cube.scale = 2.0f;
 
-		meshes.push_back(cube);
+		scene.add(cube);
 
-		for (int i = 0; i < meshes.size(); i++) {
-			if (meshes[i].scale != 1) {
-				meshes[i].resize();
+		for (int i = 0; i < scene.allMeshesTexture.size(); i++) {
+			if (scene.allMeshesTexture[i].scale != 1) {
+				scene.allMeshesTexture[i].resize();
 			}
 		}
+		if (scene.skybox.scale != 1) {
+			scene.skybox.resize();
+		}
 
-		for (const auto& mesh : meshes) {
+
+		
+		for (const auto& vertex : scene.skybox.vertices) {
+			vertices.push_back(vertex);
+		}
+		for (const auto& index : scene.skybox.indices) {
+			indices.push_back(index);
+		}		
+		for (const auto& mesh : scene.allMeshesTexture) {
 			for (const auto& vertex : mesh.vertices) {
 				vertices.push_back(vertex);
 			}
@@ -443,6 +542,9 @@ private:
 				indices.push_back(index);
 			}
 		}
+
+		//scene.meshes.push_back(std::make_pair(triangle, triangle.flag));
+		//scene.meshes[0]
 	}
 
 	void initVulkan() {
@@ -457,23 +559,32 @@ private:
 		createRenderPass();
 		createDescriptorSetLayoutUBO();
 		createDescriptorSetLayoutTexture();
+
 		createGraphicsPipelineScene();
+		createGraphicsPipelineSkybox();
+
 		createCommandPool();
 		createDepthResources();
 		createFramebuffers();
 		//createKtxDevice();
-		createTextureImage();
+		createTextureImages();
 		createTextureImageView();
+
 		createTextureSampler();
+		createSkyboxSampler();
+
 		createVertexBuffer();
 		createIndexBuffer();
 		createCameraSpec();
 		createUniformBuffers();
 		createDynamicUniformBuffers();
+
 		createDescriptorPoolUBO();
 		createDescriptorPoolTexture();
 		createDescriptorSetsUBO();
+
 		createDescriptorSetsTexture();
+
 		createCommandBuffers();
 		createSyncObjects();
 	}
@@ -520,18 +631,24 @@ private:
 	void cleanup() {
 		cleanupSwapChain();
 
-		vkDestroyPipeline(device, pipelines.pipelineScene, nullptr);
-		vkDestroyPipelineLayout(device, pipelineLayouts.pipelineLayoutScene, nullptr);
+		vkDestroyPipeline(device, pipeline.scene, nullptr);
+		vkDestroyPipelineLayout(device, pipelineLayout.scene, nullptr);
+		vkDestroyPipeline(device, pipeline.skybox, nullptr);
+		vkDestroyPipelineLayout(device, pipelineLayout.skybox, nullptr);
 
 		vkDestroySwapchainKHR(device, swapChain, nullptr);
 
-		vkDestroySampler(device, textureSampler, nullptr);
+		vkDestroySampler(device, sampler.scene, nullptr);
+		vkDestroySampler(device, sampler.skybox, nullptr);
 
-		for (int i = 0; i < meshes.size(); i++) {
-			vkDestroyImageView(device, textureImageView[i], nullptr);
-			vkDestroyImage(device, textureImage[i], nullptr);
-			vkFreeMemory(device, textureImageMemory[i], nullptr);
+		for (int i = 0; i < scene.allMeshesTexture.size(); i++) {
+			vkDestroyImageView(device, textureImageView.scene[i], nullptr);
+			vkDestroyImage(device, textureImage.scene[i], nullptr);
+			vkFreeMemory(device, textureImageMemory.scene[i], nullptr);
 		}
+		vkDestroyImageView(device, textureImageView.skybox, nullptr);
+		vkDestroyImage(device, textureImage.skybox, nullptr);
+		vkFreeMemory(device, textureImageMemory.skybox, nullptr);
 
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayoutUBO, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayoutTexture, nullptr);
@@ -721,8 +838,8 @@ private:
 			throw std::runtime_error("failed to create logical device!");
 		}
 
-		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &queues.graphicsQueue);
-		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &queues.presentQueue);
+		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 	}
 
 	void createSwapChain() {
@@ -980,7 +1097,7 @@ private:
 		std::array<VkDescriptorSetLayout, 2> setLayouts = { descriptorSetLayoutUBO, descriptorSetLayoutTexture };
 		pipelineLayoutInfo.pSetLayouts = setLayouts.data();
 
-		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayouts.pipelineLayoutScene) != VK_SUCCESS) {
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout.scene) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create pipeline layout!");
 		}
 
@@ -1005,13 +1122,141 @@ private:
 		pipelineInfo.pMultisampleState = &multisampling;
 		pipelineInfo.pDepthStencilState = &depthStencil;
 		pipelineInfo.pColorBlendState = &colorBlending;
-		pipelineInfo.layout = pipelineLayouts.pipelineLayoutScene;
+		pipelineInfo.layout = pipelineLayout.scene;
 		pipelineInfo.renderPass = renderPass;
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.pDynamicState = &dynamicState;
 
-		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipelines.pipelineScene) != VK_SUCCESS) {
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline.scene) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create graphics pipeline!");
+		}
+
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
+
+	}
+
+	void createGraphicsPipelineSkybox() {
+		auto vertShaderCode = readFile("shaders/skyboxVert.spv");
+		auto fragShaderCode = readFile("shaders/skyboxFrag.spv");
+
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+		auto bindingDescription = Vertex::getBindingDescription();
+		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+		VkPipelineViewportStateCreateInfo viewportState{};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;
+		viewportState.pViewports = nullptr;
+		viewportState.scissorCount = 1;
+		viewportState.pScissors = nullptr;
+
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		rasterizer.depthBiasEnable = VK_FALSE;
+
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+		VkPipelineDepthStencilStateCreateInfo depthStencil{};
+		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depthStencil.depthTestEnable = VK_FALSE;
+		depthStencil.depthWriteEnable = VK_FALSE;
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+		depthStencil.depthBoundsTestEnable = VK_FALSE;
+		depthStencil.stencilTestEnable = VK_FALSE;
+
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;
+
+		VkPipelineColorBlendStateCreateInfo colorBlending{};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.logicOp = VK_LOGIC_OP_COPY;
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+		colorBlending.blendConstants[0] = 0.0f;
+		colorBlending.blendConstants[1] = 0.0f;
+		colorBlending.blendConstants[2] = 0.0f;
+		colorBlending.blendConstants[3] = 0.0f;
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 2;
+		std::array<VkDescriptorSetLayout, 2> setLayouts = { descriptorSetLayoutUBO, descriptorSetLayoutTexture };
+		pipelineLayoutInfo.pSetLayouts = setLayouts.data();
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout.skybox) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create pipeline layout!");
+		}
+
+		VkDynamicState dynamicStates[] = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+
+		VkPipelineDynamicStateCreateInfo dynamicState{};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = 2;
+		dynamicState.pDynamicStates = dynamicStates;
+
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = &depthStencil;
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.layout = pipelineLayout.scene;
+		pipelineInfo.renderPass = renderPass;
+		pipelineInfo.subpass = 0;
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+		pipelineInfo.pDynamicState = &dynamicState;
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline.skybox) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create graphics pipeline!");
 		}
 
@@ -1095,13 +1340,13 @@ private:
 		ktxVulkanDeviceInfo_Construct(&ktxDevice, physicalDevice, device, graphicsQueue, commandPool, nullptr);
 	}*/
 
-	void createTextureImage() {
-		textureImage.resize(meshes.size());
-		textureImageMemory.resize(meshes.size());
+	void createTextureImages() {
+		textureImage.scene.resize(scene.allMeshesTexture.size());
+		textureImageMemory.scene.resize(scene.allMeshesTexture.size());
 
-		for (int i = 0; i < meshes.size(); i++) {
+		for (int i = 0; i < scene.allMeshesTexture.size(); i++) {
 
-			std::string extension = meshes[i].extension();
+			std::string extension = scene.allMeshesTexture[i].extension();
 
 			std::for_each(extension.begin(), extension.end(), [](char & c) {
 				c = tolower(c);
@@ -1110,23 +1355,23 @@ private:
 			std::list<std::string> stbExtensions{ "jpg", "png", "tga", "bmp", "psd", "gif", "hdr", "pic" };
 
 			if (!extension.compare("kdx")) {
-				createTextuteImageKTX(i);
+				createTextureImageKTX(i);
 			}
 			else if ((std::find(stbExtensions.begin(), stbExtensions.end(), extension) != stbExtensions.end())) {
-				createTextuteImageSTB(i);
+				createTextureImageSTB(i);
 			}
 			else {
 
 			}
-
-
 		}
+		//Check if all teh extensions seem correct adn choose between STB and KTX
+		createTextureSkyboxSTB();
 	}
 
-	void createTextuteImageSTB(uint32_t meshIndex) {
+	void createTextureImageSTB(uint32_t meshIndex) {
 
 		int texWidth, texHeight, texChannels;
-		std::string path(std::string("textures/") + meshes[meshIndex].filename);
+		std::string path(std::string("textures/") + scene.allMeshesTexture[meshIndex].filename);
 
 		stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		VkDeviceSize imageSize = texWidth * texHeight * 4;
@@ -1146,23 +1391,73 @@ private:
 
 		stbi_image_free(pixels);
 
-		createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage[meshIndex], textureImageMemory[meshIndex]);
+		createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage.scene[meshIndex], textureImageMemory.scene[meshIndex]);
 
-		transitionImageLayout(textureImage[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-		copyBufferToImage(stagingBuffer, textureImage[meshIndex], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-		transitionImageLayout(textureImage[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		transitionImageLayout(textureImage.scene[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
+		copyBufferToImage(stagingBuffer, textureImage.scene[meshIndex], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 0);
+		transitionImageLayout(textureImage.scene[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
 
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
-	void createTextuteImageKTX(uint32_t meshIndex) {}
+	void createTextureImageKTX(uint32_t meshIndex) {}
+
+	void createTextureSkyboxSTB() {
+
+		int texWidth, texHeight, texChannels;
+		std::string path(std::string("textures/") + scene.skybox.filenames[0]);
+
+		stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+		if (!pixels) {
+			throw std::runtime_error("failed to load texture image!");
+		}
+
+		createCubemapImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage.skybox, textureImageMemory.skybox);
+		transitionImageLayout(textureImage.skybox, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		for (int y = 0; y < scene.skybox.filenames.size(); y++) {
+			if (y) {
+
+				std::string path(std::string("textures/") + scene.skybox.filenames[y]);
+
+				pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+				if (!pixels) {
+					throw std::runtime_error("failed to load texture image!");
+				}
+			}
+
+			void* data;
+			vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+			memcpy(data, pixels, static_cast<size_t>(imageSize));
+			vkUnmapMemory(device, stagingBufferMemory);
+
+			stbi_image_free(pixels);
+
+			copyBufferToImage(stagingBuffer, textureImage.skybox, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), y);
+
+		}
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+		transitionImageLayout(textureImage.skybox, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
+	}
 
 	void createTextureImageView() {
-		textureImageView.resize(meshes.size());
-		for (int i = 0; i < meshes.size(); i++) {
-			textureImageView[i] = createImageView(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+		textureImageView.scene.resize(scene.allMeshesTexture.size());
+		for (int i = 0; i < scene.allMeshesTexture.size(); i++) {
+			textureImageView.scene[i] = createImageView(textureImage.scene[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 		}
+		textureImageView.skybox = createCubemapView(textureImage.skybox, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
 	}
 
 	void createTextureSampler() {
@@ -1181,7 +1476,28 @@ private:
 		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
 		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 
-		if (vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
+		if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler.scene) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create texture sampler!");
+		}
+	}
+
+	void createSkyboxSampler() {
+		VkSamplerCreateInfo samplerInfo{};
+		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		samplerInfo.magFilter = VK_FILTER_LINEAR;
+		samplerInfo.minFilter = VK_FILTER_LINEAR;
+		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		samplerInfo.anisotropyEnable = VK_TRUE;
+		samplerInfo.maxAnisotropy = 16;
+		samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+		samplerInfo.unnormalizedCoordinates = VK_FALSE;
+		samplerInfo.compareEnable = VK_FALSE;
+		samplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+		if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler.skybox) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create texture sampler!");
 		}
 	}
@@ -1197,6 +1513,26 @@ private:
 		viewInfo.subresourceRange.levelCount = 1;
 		viewInfo.subresourceRange.baseArrayLayer = 0;
 		viewInfo.subresourceRange.layerCount = 1;
+
+		VkImageView imageView;
+		if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create texture image view!");
+		}
+
+		return imageView;
+	}
+
+	VkImageView createCubemapView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags) {
+		VkImageViewCreateInfo viewInfo{};
+		viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		viewInfo.image = image;
+		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+		viewInfo.format = format;
+		viewInfo.subresourceRange.aspectMask = aspectFlags;
+		viewInfo.subresourceRange.baseMipLevel = 0;
+		viewInfo.subresourceRange.levelCount = 1;
+		viewInfo.subresourceRange.baseArrayLayer = 0;
+		viewInfo.subresourceRange.layerCount = 6;
 
 		VkImageView imageView;
 		if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
@@ -1241,7 +1577,43 @@ private:
 		vkBindImageMemory(device, image, imageMemory, 0);
 	}
 
-	void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+	void createCubemapImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
+		VkImageCreateInfo imageInfo{};
+		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		imageInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+		imageInfo.imageType = VK_IMAGE_TYPE_2D;
+		imageInfo.extent.width = width;
+		imageInfo.extent.height = height;
+		imageInfo.extent.depth = 1;
+		imageInfo.mipLevels = 1;
+		imageInfo.arrayLayers = 6;
+		imageInfo.format = format;
+		imageInfo.tiling = tiling;
+		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageInfo.usage = usage;
+		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+		if (vkCreateImage(device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create image!");
+		}
+
+		VkMemoryRequirements memRequirements;
+		vkGetImageMemoryRequirements(device, image, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate image memory!");
+		}
+
+		vkBindImageMemory(device, image, imageMemory, 0);
+	}
+
+	void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t layerCount) {
 		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
 		VkImageMemoryBarrier barrier{};
@@ -1255,7 +1627,7 @@ private:
 		barrier.subresourceRange.baseMipLevel = 0;
 		barrier.subresourceRange.levelCount = 1;
 		barrier.subresourceRange.baseArrayLayer = 0;
-		barrier.subresourceRange.layerCount = 1;
+		barrier.subresourceRange.layerCount = layerCount;
 
 		VkPipelineStageFlags sourceStage;
 		VkPipelineStageFlags destinationStage;
@@ -1290,7 +1662,7 @@ private:
 		endSingleTimeCommands(commandBuffer);
 	}
 
-	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height, uint32_t face) {
 		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
 		VkBufferImageCopy region{};
@@ -1299,7 +1671,7 @@ private:
 		region.bufferImageHeight = 0;
 		region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		region.imageSubresource.mipLevel = 0;
-		region.imageSubresource.baseArrayLayer = 0;
+		region.imageSubresource.baseArrayLayer = face;
 		region.imageSubresource.layerCount = 1;
 		region.imageOffset = { 0, 0, 0 };
 		region.imageExtent = {
@@ -1372,7 +1744,7 @@ private:
 		if (minUboAlignment > 0) {
 			dynamicAlignment = (dynamicAlignment + minUboAlignment - 1) & ~(minUboAlignment - 1);
 		}
-		VkDeviceSize bufferSize = meshes.size() * dynamicAlignment;
+		VkDeviceSize bufferSize = scene.getCountMeshes() * dynamicAlignment;
 
 		dynamicUniformBuffers.resize(swapChainImages.size());
 		dynamicUniformBuffersMemory.resize(swapChainImages.size());
@@ -1403,13 +1775,13 @@ private:
 	void createDescriptorPoolTexture() {
 		std::array<VkDescriptorPoolSize, 1> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[0].descriptorCount = static_cast<uint32_t>(meshes.size());
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(scene.getCountMeshes());
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 		poolInfo.pPoolSizes = poolSizes.data();
-		poolInfo.maxSets = static_cast<uint32_t>(meshes.size());
+		poolInfo.maxSets = static_cast<uint32_t>(scene.getCountMeshes());
 
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPoolTexture) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor pool!");
@@ -1463,29 +1835,36 @@ private:
 	}
 
 	void createDescriptorSetsTexture() {
-		std::vector<VkDescriptorSetLayout> layouts(meshes.size(), descriptorSetLayoutTexture);
+		std::vector<VkDescriptorSetLayout> layouts(scene.getCountMeshes(), descriptorSetLayoutTexture);
 		VkDescriptorSetAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocInfo.descriptorPool = descriptorPoolTexture;
-		allocInfo.descriptorSetCount = static_cast<uint32_t>(meshes.size());
+		allocInfo.descriptorSetCount = static_cast<uint32_t>(scene.getCountMeshes());
 		allocInfo.pSetLayouts = layouts.data();
 
-		descriptorSetsTexture.resize(meshes.size());
-		if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSetsTexture.data()) != VK_SUCCESS) {
+		descriptorSetTexture.resize(scene.getCountMeshes());
+		if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSetTexture.data()) != VK_SUCCESS) {
 			throw std::runtime_error("failed to allocate descriptor sets!");
 		}
 
-		for (size_t i = 0; i < meshes.size(); i++) {
-
+		for (size_t i = 0; i < scene.getCountMeshes(); i++) {
 			VkDescriptorImageInfo imageInfo{};
-			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			imageInfo.imageView = textureImageView[i];
-			imageInfo.sampler = textureSampler;
+			if (i == 0) {
+				imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				imageInfo.imageView = textureImageView.skybox;
+				imageInfo.sampler = sampler.skybox;
+			}
+			else {
+				imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				imageInfo.imageView = textureImageView.scene[i-1];
+				imageInfo.sampler = sampler.scene;
+			}
+			//-1 caues of the skybox
 
 			std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
 
 			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrites[0].dstSet = descriptorSetsTexture[i];
+			descriptorWrites[0].dstSet = descriptorSetTexture[i];
 			descriptorWrites[0].dstBinding = 0;
 			descriptorWrites[0].dstArrayElement = 0;
 			descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1549,8 +1928,8 @@ private:
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &commandBuffer;
 
-		vkQueueSubmit(queues.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-		vkQueueWaitIdle(queues.graphicsQueue);
+		vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+		vkQueueWaitIdle(graphicsQueue);
 
 		vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 	}
@@ -1559,6 +1938,7 @@ private:
 		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
 		VkBufferCopy copyRegion{};
+
 		copyRegion.size = size;
 		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
 
@@ -1615,8 +1995,6 @@ private:
 
 			vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-			vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.pipelineScene);
-
 			VkViewport viewport{};
 			viewport.x = 0.0f;
 			viewport.y = 0.0f;
@@ -1639,23 +2017,36 @@ private:
 
 			vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
+			uint32_t dynamicOffset = 0;
 			uint32_t firstIndex = 0;
 			uint32_t vertexOffset = 0;
 
-			for (uint32_t j = 0; j < meshes.size(); j++)
+			//SKYBOX
+			vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.skybox);
+
+			std::array<VkDescriptorSet, 2> descriptorSets = { descriptorSetsUBO[i], descriptorSetTexture[0] };
+			vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout.skybox, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
+			vkCmdDrawIndexed(commandBuffers[i], (uint32_t)scene.skybox.indices.size(), 1, firstIndex, vertexOffset, 0);
+
+			firstIndex += (uint32_t)scene.skybox.indices.size();
+			vertexOffset += (uint32_t)scene.skybox.vertices.size();
+
+			//SCENE
+			vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.scene);
+			for (uint32_t j = 0; j < scene.allMeshesTexture.size(); j++)
 			{
-				uint32_t dynamicOffset = j * static_cast<uint32_t>(dynamicAlignment);
+				//+1 cause of skybox
+				dynamicOffset = (j+1) * static_cast<uint32_t>(dynamicAlignment);
 
-				std::array<VkDescriptorSet, 2> descriptorSets = { descriptorSetsUBO[i], descriptorSetsTexture[j] };
+				std::array<VkDescriptorSet, 2> descriptorSets = { descriptorSetsUBO[i], descriptorSetTexture[j+1] };
+				vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout.scene, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
+				vkCmdDrawIndexed(commandBuffers[i], (uint32_t)scene.allMeshesTexture[j].indices.size(), 1, firstIndex, vertexOffset, 0);
 
-				vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.pipelineLayoutScene, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
-
-				vkCmdDrawIndexed(commandBuffers[i], (uint32_t)meshes[j].indices.size(), 1, firstIndex, vertexOffset, 0);
-
-				firstIndex += (uint32_t)meshes[j].indices.size();
-				vertexOffset += (uint32_t)meshes[j].vertices.size();
+				firstIndex += (uint32_t)scene.allMeshesTexture[j].indices.size();
+				vertexOffset += (uint32_t)scene.allMeshesTexture[j].vertices.size();
 
 			}
+			
 			vkCmdEndRenderPass(commandBuffers[i]);
 
 			if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
@@ -1709,7 +2100,7 @@ private:
 
 		UniformBufferObject ubo{};
 		ubo.view = glm::lookAt(cameraSpec.cameraPos, cameraSpec.cameraPos + cameraSpec.cameraFront, cameraSpec.cameraUp);
-		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 100.0f);
 		ubo.proj[1][1] *= -1;
 
 		void* data;
@@ -1724,16 +2115,22 @@ private:
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-		size_t bufferSize = meshes.size() * dynamicAlignment;
+		size_t bufferSize = scene.getCountMeshes() * dynamicAlignment;
 
 		DynamicUniformBufferObject dubo;
 		dubo.model = (glm::mat4*)alignedAlloc(bufferSize, dynamicAlignment);
 
 		glm::vec3 offset(1.0f);
 
-		for (uint32_t index = 0; index < meshes.size(); index++)
+		for (uint32_t index = 0; index < scene.getCountMeshes(); index++)
 		{
-			*(glm::mat4*)((uint64_t)dubo.model + (index * dynamicAlignment)) = glm::rotate(glm::translate(glm::mat4(1.0f), meshes[index].pos), time * glm::radians(meshes[index].rotationAngle), meshes[index].rotation);
+			if (index == 0) {
+				*(glm::mat4*)((uint64_t)dubo.model + (index * dynamicAlignment)) = glm::translate(glm::mat4(1.0f), cameraSpec.cameraPos);
+			}
+			else {
+				//-1 cause of the skybox
+				*(glm::mat4*)((uint64_t)dubo.model + (index * dynamicAlignment)) = glm::rotate(glm::translate(glm::mat4(1.0f), scene.allMeshesTexture[index-1].pos), time * glm::radians(scene.allMeshesTexture[index - 1].rotationAngle), scene.allMeshesTexture[index - 1].rotation);
+			}
 		}
 
 		void* data;
@@ -1784,7 +2181,7 @@ private:
 
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
-		if (vkQueueSubmit(queues.graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
 			throw std::runtime_error("failed to submit draw command buffer!");
 		}
 
@@ -1800,7 +2197,7 @@ private:
 
 		presentInfo.pImageIndices = &imageIndex;
 
-		result = vkQueuePresentKHR(queues.presentQueue, &presentInfo);
+		result = vkQueuePresentKHR(presentQueue, &presentInfo);
 
 		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
 			framebufferResized = false;
@@ -2021,7 +2418,7 @@ private:
 };
 
 int main() {
-	HelloTriangleApplication app;
+	HelloApplication app;
 
 	try {
 		app.run();
