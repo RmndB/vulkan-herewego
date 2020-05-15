@@ -13,6 +13,7 @@ Global additional features :
 - Multiple meshes drawing using an unique Vertex Buffer storing all the vertices from every objects
 - Per object texture: two descriptor sets binded (one with the DUBO and one with the texture)
 - Global mesh holding structure for further scene rendering
+- Skybox (second graphics pipeline etc..)
 
 GLFW specific implementations :
 - Look around when dragging with left mouse button
