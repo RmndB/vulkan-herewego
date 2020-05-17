@@ -32,7 +32,8 @@
 #include <unordered_map>
 #include <utility> 
 
-#include <boost/any.hpp>
+//#include <boost/variant.hpp>
+#include <variant>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -182,7 +183,11 @@ public:
 	glm::vec3 pos;
 	float scale = 1;
 
-	static std::string flag;;
+	uint32_t imageIndex;
+	uint32_t imageViewIndex;
+	uint32_t descriptorSetIndex;
+
+	static std::string flag;
 
 	void resize() {
 		for (int i = 0; i < vertices.size(); i++) {
@@ -212,7 +217,7 @@ public:
 		}
 	}
 };
-std::string MeshLayout<MeshTexture>::flag = "MESH_TEXTURE";
+std::string MeshLayout<MeshTexture>::flag = "MESH_TEXTURE"; 
 
 class Skybox : public MeshLayout<Skybox> {
 public:
@@ -238,26 +243,21 @@ std::string MeshLayout<Skybox>::flag = "SKYBOX";
 
 class Scene {
 public:
-	std::vector<MeshTexture> allMeshesTexture;
-	std::vector<std::pair<boost::any, std::string>> meshes;
-	Skybox skybox;
+	std::vector<std::variant<MeshTexture, Skybox>> meshes;
 
 	std::list<std::string> listFlag = { "SKYBOX", "MESH_TEXTURE" };
-	
-	size_t getCountMeshes() {
-		return allMeshesTexture.size() + 1;
-	}
 
-	void add(MeshTexture mesh) {
-		allMeshesTexture.push_back(mesh);
-		std::cout << mesh.flag << std::endl;
+	std::string getFlag(uint32_t index) {		
+		if (auto mesh = std::get_if<MeshTexture>(&meshes[index])) {
+			return mesh->flag;
+		}
+		else if (auto mesh = std::get_if<Skybox>(&meshes[index])) {
+			return mesh->flag;
+		}
+		else {
+			return "NULL";
+		}
 	}
-	void add(Skybox mesh) {
-		skybox = mesh;
-		std::cout << mesh.flag << std::endl;
-	}
-
-
 };
 
 //----------------------------------------------
@@ -307,31 +307,22 @@ private:
 		VkPipeline skybox;
 	} pipeline;
 
+	struct {
+		VkSampler scene;
+		VkSampler skybox;
+	} sampler;
+
 	VkCommandPool commandPool;
 
 	VkImage depthImage;
 	VkDeviceMemory depthImageMemory;
 	VkImageView depthImageView;
 
-	struct {
-		std::vector <VkImage> scene;
-		VkImage skybox;
-	} textureImage;
+	std::vector<VkImage> textureImage;
 	
-	struct {
-		std::vector <VkDeviceMemory> scene;
-		VkDeviceMemory skybox;
-	} textureImageMemory;
+	std::vector<VkDeviceMemory> textureImageMemory;
 
-	struct {
-		std::vector <VkImageView> scene;
-		VkImageView skybox;
-	} textureImageView;
-	
-	struct {
-		VkSampler scene;
-		VkSampler skybox;
-	} sampler;
+	std::vector<VkImageView> textureImageView;
 
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
@@ -453,6 +444,32 @@ private:
 	
 	void loadMeshes() {
 
+		Skybox cube = {};
+		cube.vertices = {
+			{ { -10.0f, -10.0f, 10.0f }},
+			{ {  10.0f, -10.0f,  10.0f }},
+			{ {  10.0f,  10.0f,  10.0f }},
+			{ { -10.0f,  10.0f,  10.0f }},
+			{ { -10.0f, -10.0f, -10.0f }},
+			{ {  10.0f, -10.0f, -10.0f }},
+			{ {  10.0f,  10.0f, -10.0f }},
+			{ { -10.0f,  10.0f, -10.0f }}
+		};
+		cube.indices = {
+			0,1,2, 2,3,0, 1,5,6, 6,2,1, 7,6,5, 5,4,7, 4,0,3, 3,7,4, 4,5,1, 1,0,4, 3,2,6, 6,7,3
+		};
+		cube.pos = glm::vec3(0.0f, 0.0f, 0.0f);
+		cube.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
+		cube.rotationAngle = 20;
+		cube.filenames[0] = ("skybox/+x.bmp");
+		cube.filenames[1] = ("skybox/-x.bmp");
+		cube.filenames[2] = ("skybox/-z.bmp");
+		cube.filenames[3] = ("skybox/+z.bmp");
+		cube.filenames[4] = ("skybox/+y.bmp");
+		cube.filenames[5] = ("skybox/-y.bmp");
+		cube.scale = 2.0f;
+		scene.meshes.push_back(cube);
+
 		MeshTexture square = {};
 		square.vertices = {
 			{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
@@ -469,7 +486,7 @@ private:
 		square.filename = "square.jpg";
 		square.scale = 0.8f;
 
-		scene.add(square);
+		scene.meshes.push_back(square);
 
 		MeshTexture triangle = {};
 		triangle.vertices = {
@@ -485,66 +502,36 @@ private:
 		triangle.rotationAngle = -10;
 		triangle.filename = "triangle.jpg";
 
-		scene.add(triangle);
-
-		Skybox cube = {};
-		cube.vertices = {
-			{ { -10.0f, -10.0f, 10.0f }},
-			{ {  10.0f, -10.0f,  10.0f }},
-			{ {  10.0f,  10.0f,  10.0f }},
-			{ { -10.0f,  10.0f,  10.0f }},
-			{ { -10.0f, -10.0f, -10.0f }},
-			{ {  10.0f, -10.0f, -10.0f }},
-			{ {  10.0f,  10.0f, -10.0f }},
-			{ { -10.0f,  10.0f, -10.0f }}
-		};
-
-
-		cube.indices = {
-			0,1,2, 2,3,0, 1,5,6, 6,2,1, 7,6,5, 5,4,7, 4,0,3, 3,7,4, 4,5,1, 1,0,4, 3,2,6, 6,7,3
-		};
-
-		cube.pos = glm::vec3(0.0f, 0.0f, 0.0f);
-		cube.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
-		cube.rotationAngle = 20;
-		cube.filenames[0] = ("skybox/+x.bmp");
-		cube.filenames[1] = ("skybox/-x.bmp");
-		cube.filenames[2] = ("skybox/-z.bmp");
-		cube.filenames[3] = ("skybox/+z.bmp");
-		cube.filenames[4] = ("skybox/+y.bmp");
-		cube.filenames[5] = ("skybox/-y.bmp");
-		cube.scale = 2.0f;
-
-		scene.add(cube);
-
-		for (int i = 0; i < scene.allMeshesTexture.size(); i++) {
-			if (scene.allMeshesTexture[i].scale != 1) {
-				scene.allMeshesTexture[i].resize();
-			}
-		}
-		if (scene.skybox.scale != 1) {
-			scene.skybox.resize();
-		}
-
-
+		scene.meshes.push_back(triangle);
+	
 		
-		for (const auto& vertex : scene.skybox.vertices) {
-			vertices.push_back(vertex);
-		}
-		for (const auto& index : scene.skybox.indices) {
-			indices.push_back(index);
-		}		
-		for (const auto& mesh : scene.allMeshesTexture) {
-			for (const auto& vertex : mesh.vertices) {
-				vertices.push_back(vertex);
-			}
-			for (const auto& index : mesh.indices) {
-				indices.push_back(index);
-			}
-		}
 
-		//scene.meshes.push_back(std::make_pair(triangle, triangle.flag));
-		//scene.meshes[0]
+		//Scale & Resize
+		for (uint32_t i = 0; i < scene.meshes.size(); i++) {
+
+			if (auto mesh = std::get_if<MeshTexture>(&scene.meshes[i])) {
+				if (mesh->scale != 1) {
+					mesh->resize();
+				}
+				for (const auto& vertex : mesh->vertices) {
+					vertices.push_back(vertex);
+				}
+				for (const auto& index : mesh->indices) {
+					indices.push_back(index);
+				}
+			}
+			if (auto mesh = std::get_if<Skybox>(&scene.meshes[i])) {
+				if (mesh->scale != 1) {
+					mesh->resize();
+				}
+				for (const auto& vertex : mesh->vertices) {
+					vertices.push_back(vertex);
+				}
+				for (const auto& index : mesh->indices) {
+					indices.push_back(index);
+				}
+			}
+		}
 	}
 
 	void initVulkan() {
@@ -641,14 +628,11 @@ private:
 		vkDestroySampler(device, sampler.scene, nullptr);
 		vkDestroySampler(device, sampler.skybox, nullptr);
 
-		for (int i = 0; i < scene.allMeshesTexture.size(); i++) {
-			vkDestroyImageView(device, textureImageView.scene[i], nullptr);
-			vkDestroyImage(device, textureImage.scene[i], nullptr);
-			vkFreeMemory(device, textureImageMemory.scene[i], nullptr);
+		for (int i = 0; i < scene.meshes.size(); i++) {
+			vkDestroyImageView(device, textureImageView[i], nullptr);
+			vkDestroyImage(device, textureImage[i], nullptr);
+			vkFreeMemory(device, textureImageMemory[i], nullptr);
 		}
-		vkDestroyImageView(device, textureImageView.skybox, nullptr);
-		vkDestroyImage(device, textureImage.skybox, nullptr);
-		vkFreeMemory(device, textureImageMemory.skybox, nullptr);
 
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayoutUBO, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayoutTexture, nullptr);
@@ -1250,7 +1234,7 @@ private:
 		pipelineInfo.pMultisampleState = &multisampling;
 		pipelineInfo.pDepthStencilState = &depthStencil;
 		pipelineInfo.pColorBlendState = &colorBlending;
-		pipelineInfo.layout = pipelineLayout.scene;
+		pipelineInfo.layout = pipelineLayout.skybox;
 		pipelineInfo.renderPass = renderPass;
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
@@ -1341,37 +1325,46 @@ private:
 	}*/
 
 	void createTextureImages() {
-		textureImage.scene.resize(scene.allMeshesTexture.size());
-		textureImageMemory.scene.resize(scene.allMeshesTexture.size());
+		textureImage.resize(scene.meshes.size());
+		textureImageMemory.resize(scene.meshes.size());
 
-		for (int i = 0; i < scene.allMeshesTexture.size(); i++) {
+		for (int i = 0; i < scene.meshes.size(); i++) {
+			if (auto mesh = std::get_if<MeshTexture>(&scene.meshes[i])) {
 
-			std::string extension = scene.allMeshesTexture[i].extension();
+				std::string extension = mesh->extension();
 
-			std::for_each(extension.begin(), extension.end(), [](char & c) {
-				c = tolower(c);
-			});
+				std::for_each(extension.begin(), extension.end(), [](char & c) {
+					c = tolower(c);
+				});
 
-			std::list<std::string> stbExtensions{ "jpg", "png", "tga", "bmp", "psd", "gif", "hdr", "pic" };
+				std::list<std::string> stbExtensions{ "jpg", "png", "tga", "bmp", "psd", "gif", "hdr", "pic" };
 
-			if (!extension.compare("kdx")) {
-				createTextureImageKTX(i);
+				if (!extension.compare("kdx")) {
+					createTextureImageKTX(i);
+					mesh->imageIndex = i;
+				}
+				else if ((std::find(stbExtensions.begin(), stbExtensions.end(), extension) != stbExtensions.end())) {
+					createTextureImageSTB(i);
+					mesh->imageIndex = i;
+				}
+				else {
+
+				}
 			}
-			else if ((std::find(stbExtensions.begin(), stbExtensions.end(), extension) != stbExtensions.end())) {
-				createTextureImageSTB(i);
-			}
-			else {
-
+			if (auto mesh = std::get_if<Skybox>(&scene.meshes[i])) {
+				//Check if all the extensions seem corrects and choose between STB and KTX
+				createTextureSkyboxSTB(i);
+				mesh->imageIndex = i;
 			}
 		}
-		//Check if all teh extensions seem correct adn choose between STB and KTX
-		createTextureSkyboxSTB();
 	}
 
 	void createTextureImageSTB(uint32_t meshIndex) {
 
+		auto mesh = std::get<MeshTexture>(scene.meshes[meshIndex]);
+
 		int texWidth, texHeight, texChannels;
-		std::string path(std::string("textures/") + scene.allMeshesTexture[meshIndex].filename);
+		std::string path(std::string("textures/") + mesh.filename);
 
 		stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		VkDeviceSize imageSize = texWidth * texHeight * 4;
@@ -1391,11 +1384,11 @@ private:
 
 		stbi_image_free(pixels);
 
-		createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage.scene[meshIndex], textureImageMemory.scene[meshIndex]);
+		createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage[meshIndex], textureImageMemory[meshIndex]);
 
-		transitionImageLayout(textureImage.scene[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
-		copyBufferToImage(stagingBuffer, textureImage.scene[meshIndex], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 0);
-		transitionImageLayout(textureImage.scene[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+		transitionImageLayout(textureImage[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
+		copyBufferToImage(stagingBuffer, textureImage[meshIndex], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 0);
+		transitionImageLayout(textureImage[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
 
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -1403,10 +1396,12 @@ private:
 
 	void createTextureImageKTX(uint32_t meshIndex) {}
 
-	void createTextureSkyboxSTB() {
+	void createTextureSkyboxSTB(uint32_t meshIndex) {
+
+		auto mesh = std::get<Skybox>(scene.meshes[meshIndex]);
 
 		int texWidth, texHeight, texChannels;
-		std::string path(std::string("textures/") + scene.skybox.filenames[0]);
+		std::string path(std::string("textures/") + mesh.filenames[0]);
 
 		stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		VkDeviceSize imageSize = texWidth * texHeight * 4;
@@ -1415,18 +1410,18 @@ private:
 			throw std::runtime_error("failed to load texture image!");
 		}
 
-		createCubemapImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage.skybox, textureImageMemory.skybox);
-		transitionImageLayout(textureImage.skybox, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
+		createCubemapImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage[meshIndex], textureImageMemory[meshIndex]);
+		transitionImageLayout(textureImage[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6);
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
 
 		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
-		for (int y = 0; y < scene.skybox.filenames.size(); y++) {
+		for (int y = 0; y < mesh.filenames.size(); y++) {
 			if (y) {
 
-				std::string path(std::string("textures/") + scene.skybox.filenames[y]);
+				std::string path(std::string("textures/") + mesh.filenames[y]);
 
 				pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
@@ -1442,22 +1437,28 @@ private:
 
 			stbi_image_free(pixels);
 
-			copyBufferToImage(stagingBuffer, textureImage.skybox, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), y);
+			copyBufferToImage(stagingBuffer, textureImage[meshIndex], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), y);
 
 		}
 
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 
-		transitionImageLayout(textureImage.skybox, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
+		transitionImageLayout(textureImage[meshIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 6);
 	}
 
 	void createTextureImageView() {
-		textureImageView.scene.resize(scene.allMeshesTexture.size());
-		for (int i = 0; i < scene.allMeshesTexture.size(); i++) {
-			textureImageView.scene[i] = createImageView(textureImage.scene[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+		textureImageView.resize(scene.meshes.size());
+		for (int i = 0; i < scene.meshes.size(); i++) {
+			if (auto mesh = std::get_if<MeshTexture>(&scene.meshes[i])) {
+				textureImageView[i] = createImageView(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+				mesh->imageViewIndex = i;
+			}
+			if (auto mesh = std::get_if<Skybox>(&scene.meshes[i])) {
+				textureImageView[i] = createCubemapView(textureImage[i], VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+				mesh->imageViewIndex = i;
+			}
 		}
-		textureImageView.skybox = createCubemapView(textureImage.skybox, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
 	}
 
 	void createTextureSampler() {
@@ -1744,7 +1745,7 @@ private:
 		if (minUboAlignment > 0) {
 			dynamicAlignment = (dynamicAlignment + minUboAlignment - 1) & ~(minUboAlignment - 1);
 		}
-		VkDeviceSize bufferSize = scene.getCountMeshes() * dynamicAlignment;
+		VkDeviceSize bufferSize = scene.meshes.size() * dynamicAlignment;
 
 		dynamicUniformBuffers.resize(swapChainImages.size());
 		dynamicUniformBuffersMemory.resize(swapChainImages.size());
@@ -1775,13 +1776,13 @@ private:
 	void createDescriptorPoolTexture() {
 		std::array<VkDescriptorPoolSize, 1> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[0].descriptorCount = static_cast<uint32_t>(scene.getCountMeshes());
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(scene.meshes.size());
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
 		poolInfo.pPoolSizes = poolSizes.data();
-		poolInfo.maxSets = static_cast<uint32_t>(scene.getCountMeshes());
+		poolInfo.maxSets = static_cast<uint32_t>(scene.meshes.size());
 
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPoolTexture) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create descriptor pool!");
@@ -1835,31 +1836,34 @@ private:
 	}
 
 	void createDescriptorSetsTexture() {
-		std::vector<VkDescriptorSetLayout> layouts(scene.getCountMeshes(), descriptorSetLayoutTexture);
+		std::vector<VkDescriptorSetLayout> layouts(scene.meshes.size(), descriptorSetLayoutTexture);
 		VkDescriptorSetAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocInfo.descriptorPool = descriptorPoolTexture;
-		allocInfo.descriptorSetCount = static_cast<uint32_t>(scene.getCountMeshes());
+		allocInfo.descriptorSetCount = static_cast<uint32_t>(scene.meshes.size());
 		allocInfo.pSetLayouts = layouts.data();
 
-		descriptorSetTexture.resize(scene.getCountMeshes());
+		descriptorSetTexture.resize(scene.meshes.size());
 		if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSetTexture.data()) != VK_SUCCESS) {
 			throw std::runtime_error("failed to allocate descriptor sets!");
 		}
 
-		for (size_t i = 0; i < scene.getCountMeshes(); i++) {
+		for (uint32_t i = 0; i < scene.meshes.size(); i++) {
 			VkDescriptorImageInfo imageInfo{};
-			if (i == 0) {
+			//Scene
+			if (auto mesh = std::get_if<MeshTexture>(&scene.meshes[i])) {
 				imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-				imageInfo.imageView = textureImageView.skybox;
-				imageInfo.sampler = sampler.skybox;
-			}
-			else {
-				imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-				imageInfo.imageView = textureImageView.scene[i-1];
+				imageInfo.imageView = textureImageView[mesh->imageViewIndex];
 				imageInfo.sampler = sampler.scene;
+				mesh->descriptorSetIndex = i;
 			}
-			//-1 caues of the skybox
+			//Skybox
+			else if (auto mesh = std::get_if<Skybox>(&scene.meshes[i])) {
+				imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				imageInfo.imageView = textureImageView[mesh->imageViewIndex];
+				imageInfo.sampler = sampler.skybox;
+				mesh->descriptorSetIndex = i;
+			}
 
 			std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
 
@@ -2017,34 +2021,39 @@ private:
 
 			vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-			uint32_t dynamicOffset = 0;
+			uint32_t dynamicOffset;
 			uint32_t firstIndex = 0;
 			uint32_t vertexOffset = 0;
 
-			//SKYBOX
-			vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.skybox);
-
-			std::array<VkDescriptorSet, 2> descriptorSets = { descriptorSetsUBO[i], descriptorSetTexture[0] };
-			vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout.skybox, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
-			vkCmdDrawIndexed(commandBuffers[i], (uint32_t)scene.skybox.indices.size(), 1, firstIndex, vertexOffset, 0);
-
-			firstIndex += (uint32_t)scene.skybox.indices.size();
-			vertexOffset += (uint32_t)scene.skybox.vertices.size();
-
 			//SCENE
-			vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.scene);
-			for (uint32_t j = 0; j < scene.allMeshesTexture.size(); j++)
+			
+			for (uint32_t j = 0; j < scene.meshes.size(); j++)
 			{
-				//+1 cause of skybox
-				dynamicOffset = (j+1) * static_cast<uint32_t>(dynamicAlignment);
+				dynamicOffset = j * static_cast<uint32_t>(dynamicAlignment);
+				//Scene
+				if (auto mesh = std::get_if<MeshTexture>(&scene.meshes[j])) {
 
-				std::array<VkDescriptorSet, 2> descriptorSets = { descriptorSetsUBO[i], descriptorSetTexture[j+1] };
-				vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout.scene, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
-				vkCmdDrawIndexed(commandBuffers[i], (uint32_t)scene.allMeshesTexture[j].indices.size(), 1, firstIndex, vertexOffset, 0);
+					std::array<VkDescriptorSet, 2> descriptorSets = { descriptorSetsUBO[i], descriptorSetTexture[mesh->descriptorSetIndex] };
 
-				firstIndex += (uint32_t)scene.allMeshesTexture[j].indices.size();
-				vertexOffset += (uint32_t)scene.allMeshesTexture[j].vertices.size();
+					vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.scene);
+					vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout.scene, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
+					vkCmdDrawIndexed(commandBuffers[i], (uint32_t)mesh->indices.size(), 1, firstIndex, vertexOffset, 0);
 
+					firstIndex += (uint32_t)mesh->indices.size();
+					vertexOffset += (uint32_t)mesh->vertices.size();
+				}
+				//Skybox
+				else if (auto mesh = std::get_if<Skybox>(&scene.meshes[j])) {
+
+					std::array<VkDescriptorSet, 2> descriptorSets = { descriptorSetsUBO[i], descriptorSetTexture[mesh->descriptorSetIndex] };
+
+					vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.skybox);
+					vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout.skybox, 0, 2, descriptorSets.data(), 1, &dynamicOffset);
+					vkCmdDrawIndexed(commandBuffers[i], (uint32_t)mesh->indices.size(), 1, firstIndex, vertexOffset, 0);
+
+					firstIndex += (uint32_t)mesh->indices.size();
+					vertexOffset += (uint32_t)mesh->vertices.size();
+				}
 			}
 			
 			vkCmdEndRenderPass(commandBuffers[i]);
@@ -2115,21 +2124,20 @@ private:
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-		size_t bufferSize = scene.getCountMeshes() * dynamicAlignment;
+		size_t bufferSize = scene.meshes.size() * dynamicAlignment;
 
 		DynamicUniformBufferObject dubo;
 		dubo.model = (glm::mat4*)alignedAlloc(bufferSize, dynamicAlignment);
 
 		glm::vec3 offset(1.0f);
 
-		for (uint32_t index = 0; index < scene.getCountMeshes(); index++)
+		for (uint32_t index = 0; index < scene.meshes.size(); index++)
 		{
-			if (index == 0) {
+			if (scene.getFlag(index).compare("SKYBOX") == 0) {
 				*(glm::mat4*)((uint64_t)dubo.model + (index * dynamicAlignment)) = glm::translate(glm::mat4(1.0f), cameraSpec.cameraPos);
 			}
-			else {
-				//-1 cause of the skybox
-				*(glm::mat4*)((uint64_t)dubo.model + (index * dynamicAlignment)) = glm::rotate(glm::translate(glm::mat4(1.0f), scene.allMeshesTexture[index-1].pos), time * glm::radians(scene.allMeshesTexture[index - 1].rotationAngle), scene.allMeshesTexture[index - 1].rotation);
+			else if (auto mesh = std::get_if<MeshTexture>(&scene.meshes[index])) {
+				*(glm::mat4*)((uint64_t)dubo.model + (index * dynamicAlignment)) = glm::rotate(glm::translate(glm::mat4(1.0f), mesh->pos), time * glm::radians(mesh->rotationAngle), mesh->rotation);
 			}
 		}
 
