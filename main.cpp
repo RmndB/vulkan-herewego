@@ -12,6 +12,9 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+
 #include <ktx.h>
 #include <ktxvulkan.h>
 
@@ -34,6 +37,7 @@
 
 //#include <boost/variant.hpp>
 #include <variant>
+#include <optional>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -163,6 +167,14 @@ struct Vertex {
 	}
 };
 
+namespace std {
+	template<> struct hash<Vertex> {
+		size_t operator()(Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^ (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^ (hash<glm::vec2>()(vertex.texCoord) << 1);
+		}
+	};
+}
+
 struct UniformBufferObject {
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 proj;
@@ -177,7 +189,7 @@ template <typename T>
 class MeshLayout {
 public:
 	std::vector<Vertex> vertices;
-	std::vector<uint16_t> indices;
+	std::vector<uint32_t> indices;
 	glm::vec3 rotation;
 	float rotationAngle;
 	glm::vec3 pos;
@@ -187,7 +199,50 @@ public:
 	uint32_t imageViewIndex;
 	uint32_t descriptorSetIndex;
 
-	static std::string flag;
+	static const std::string flag;
+
+	std::optional<std::string> modelPath;
+
+	void loadModel() {
+		if (modelPath.has_value() && !vertices.size() && !indices.size()) {
+			tinyobj::attrib_t attrib;
+			std::vector<tinyobj::shape_t> shapes;
+			std::vector<tinyobj::material_t> materials;
+			std::string warn, err;
+
+			if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, modelPath.value().c_str())) {
+				throw std::runtime_error(warn + err);
+			}
+
+			std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+
+			for (const auto& shape : shapes) {
+				for (const auto& index : shape.mesh.indices) {
+					Vertex vertex{};
+
+					vertex.pos = {
+						attrib.vertices[3 * index.vertex_index + 0],
+						attrib.vertices[3 * index.vertex_index + 1],
+						attrib.vertices[3 * index.vertex_index + 2]
+					};
+
+					vertex.texCoord = {
+						attrib.texcoords[2 * index.texcoord_index + 0],
+						1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+					};
+
+					vertex.color = { 1.0f, 1.0f, 1.0f };
+
+					if (uniqueVertices.count(vertex) == 0) {
+						uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+						vertices.push_back(vertex);
+					}
+
+					indices.push_back(uniqueVertices[vertex]);
+				}
+			}
+		}
+	}
 
 	void resize() {
 		for (int i = 0; i < vertices.size(); i++) {
@@ -195,7 +250,7 @@ public:
 		}
 	}
 };
-template <typename T> std::string MeshLayout<T>::flag = "LAYOUT_ONLY";
+template <typename T> const std::string MeshLayout<T>::flag = "LAYOUT_ONLY";
 
 
 class MeshTexture : public MeshLayout<MeshTexture> {
@@ -217,13 +272,13 @@ public:
 		}
 	}
 };
-std::string MeshLayout<MeshTexture>::flag = "MESH_TEXTURE"; 
+const std::string MeshLayout<MeshTexture>::flag = "MESH_TEXTURE";
 
 class Skybox : public MeshLayout<Skybox> {
 public:
 	std::array<const char*, 6>  filenames;
 
-	std::string extension(uint32_t index) {
+	const std::string extension(uint32_t index) {
 		std::string::size_type idx = std::string(filenames[index]).rfind('.');
 
 		if (idx != std::string::npos)
@@ -238,7 +293,7 @@ public:
 		}
 	}
 };
-std::string MeshLayout<Skybox>::flag = "SKYBOX";
+const std::string MeshLayout<Skybox>::flag = "SKYBOX";
 // ------
 
 class Scene {
@@ -247,7 +302,7 @@ public:
 
 	std::list<std::string> listFlag = { "SKYBOX", "MESH_TEXTURE" };
 
-	std::string getFlag(uint32_t index) {		
+	const std::string getFlag(uint32_t index) {
 		if (auto mesh = std::get_if<MeshTexture>(&meshes[index])) {
 			return mesh->flag;
 		}
@@ -330,7 +385,7 @@ private:
 	VkDeviceMemory indexBufferMemory;
 
 	std::vector<Vertex> vertices;
-	std::vector<uint16_t> indices;
+	std::vector<uint32_t> indices;
 
 	std::vector<VkBuffer> uniformBuffers;
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
@@ -441,7 +496,7 @@ private:
 			cameraSpec.cameraPos += (float)yoffset / 50 * cameraSpeed * cameraSpec.cameraFront;
 		}
 	}
-	
+
 	void loadMeshes() {
 
 		Skybox cube = {};
@@ -480,7 +535,7 @@ private:
 		square.indices = {
 			0, 1, 2, 2, 3, 0
 		};
-		square.pos = glm::vec3(0.0f, 0.0f, 0.5f);
+		square.pos = glm::vec3(1.5f, 0.0f, 0.5f);
 		square.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
 		square.rotationAngle = 20;
 		square.filename = "square.jpg";
@@ -497,13 +552,24 @@ private:
 		triangle.indices = {
 			0, 1, 2
 		};
-		triangle.pos = glm::vec3(0.0f, 0.0f, -1.0f);
+		triangle.pos = glm::vec3(-1.5f, 0.0f, -1.0f);
 		triangle.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
 		triangle.rotationAngle = -10;
 		triangle.filename = "triangle.jpg";
 
 		scene.meshes.push_back(triangle);
-	
+
+		MeshTexture vikingHouse = {};
+		//for later: cat models + filename in the function
+		vikingHouse.modelPath = "models/viking_room.obj";
+		vikingHouse.loadModel();
+		vikingHouse.filename = "viking_room.png";
+		vikingHouse.pos = glm::vec3(0.0f, 0.0f, 0.0f);
+		vikingHouse.rotation = glm::vec3(0.0f, 0.0f, 1.0f);
+		vikingHouse.rotationAngle = -10;
+		vikingHouse.scale = 0.7f;
+
+		scene.meshes.push_back(vikingHouse);
 		
 
 		//Scale & Resize
@@ -2019,7 +2085,7 @@ private:
 			VkDeviceSize offsets[] = { 0 };
 			vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
-			vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+			vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 			uint32_t dynamicOffset;
 			uint32_t firstIndex = 0;
@@ -2091,7 +2157,7 @@ private:
 		glfwGetFramebufferSize(window, &width, &height);
 
 		cameraSpec.cameraPos = glm::vec3(2.0f, 2.0f, 2.0f);
-		cameraSpec.cameraFront = glm::vec3(-2.0f, -2.0f, -2.0f);
+		cameraSpec.cameraFront = -cameraSpec.cameraPos;
 		cameraSpec.cameraUp = glm::vec3(0.0f, 0.0f, 1.0f);
 		cameraSpec.firstMouse = true;
 		cameraSpec.yaw = 135.0f;
